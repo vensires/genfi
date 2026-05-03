@@ -1,0 +1,194 @@
+.TH GENFI 1 "May 2026" "genfi 0.1.1" "User Commands"
+
+.SH NAME
+genfi \- generate folder icons from contained video frames and photos
+
+.SH SYNOPSIS
+.B genfi
+[\fIOPTIONS\fR] [\fIPATH\fR]
+
+.SH DESCRIPTION
+.B genfi
+recursively scans directories for folders containing video files and/or photos,
+extracts frames from videos (or uses photos directly), composes them into a
+folder-shaped icon, and sets it as the folder's custom Nautilus icon using \fBgio\fR(1).
+
+Videos are always used first. Remaining frame slots are filled by photos.
+
+.SH OPTIONS
+
+.TP
+.B \fIPATH\fR
+Root directory to scan. Defaults to the current directory (\fB.\fR).
+
+.TP
+.B \-\-version
+Show program version and exit.
+
+.TP
+.B \-\-clean
+Remove custom icons from all processed folders under \fIPATH\fR and delete generated image files.
+
+.TP
+.B \-\-uninstall
+Full uninstall: revert all folder icons, remove cache, config, and generated files.
+
+.TP
+.B \-\-dry\-run
+Show what would be done without making any changes.
+
+.TP
+.B \-\-force
+Regenerate icons even if the folder content hasn't changed.
+
+.TP
+.B \-\-no\-restart
+Skip the Nautilus refresh step at the end.
+
+.TP
+.B \-\-max\-frames \fIN\fR
+Maximum number of media frames to include per folder icon. Default: 4.
+
+.TP
+.B \-\-size \fIN\fR
+Output icon resolution in pixels (square). Default: 512.
+
+.TP
+.B \-\-frame\-position \fIF\fR
+Position in video to grab frame, as a fraction (0.0 to 1.0). Default: 0.1 (10% into the video).
+
+.TP
+.B \-\-crop \fIMODE\fR
+How to handle non-square frames. Modes: \fBfill\fR (stretch), \fBfit\fR (letterbox), \fBcenter\fR (center-crop). Default: center.
+
+.TP
+.B \-\-types \fITYPE\fR
+Media types to include: \fBboth\fR (videos first, then photos), \fBvideo\fR (videos only), \fBphoto\fR (photos only). Default: both.
+
+.TP
+.B \-\-workers \fIN\fR
+Number of parallel ffmpeg workers for video frame extraction. Default: 4.
+
+.TP
+.B \-v, \-\-verbose
+Show detailed output including debug information.
+
+.TP
+.B \-q, \-\-quiet
+Suppress all output except errors.
+
+.SH CONFIGURATION
+A configuration file at \fB~/.config/genfi/genfi.toml\fR can set persistent defaults. Example:
+
+.nf
+max_frames = 4
+icon_size = 256
+frame_position = 0.15
+crop_mode = "center"
+media_types = "both"
+workers = 2
+.fi
+
+CLI flags always override configuration file values.
+
+.SH CACHE
+Results are cached in \fB~/.cache/thumbnails/genfi/genfi_cache.db\fR.
+Folders that haven't changed (based on mtime and media file hash) are skipped
+unless \fB\-\-force\fR is used.
+
+.SH NAUTILUS REFRESH
+After generating icons, \fBgenfi\fR automatically refreshes Nautilus:
+
+1. Touches each processed folder (best-effort metadata re-read)
+2. If \fBxdotool\fR is available, sends F5 to open Nautilus windows
+3. Otherwise runs \fBnautilus -q\fR (graceful quit; Nautilus auto-restarts on next open)
+
+Use \fB\-\-no\-restart\fR to skip this step.
+
+.SH NAUTILUS INTEGRATION
+Install the Nautilus script for right-click integration:
+
+.nf
+cp nautilus-scripts/genfi ~/.local/share/nautilus/scripts/
+chmod +x ~/.local/share/nautilus/scripts/genfi
+.fi
+
+Then right-click any folder in Nautilus, select "Scripts", then "genfi".
+
+.SH UNINSTALL
+
+.nf
+# Remove pip package
+pip uninstall genfi
+
+# Or use the bundled script
+./uninstall.sh          # Remove genfi files
+./uninstall.sh \-\-all     # Also revert all folder icons
+.fi
+
+.SH REQUIREMENTS
+.TP
+.I Python >= 3.11
+.TP
+.I ffmpeg
+Required for video frame extraction.
+.TP
+.I Pillow
+Installed automatically via pip.
+.TP
+.I xdotool (optional)
+If installed, used for non-disruptive Nautilus refresh via F5 key.
+
+.SH EXAMPLES
+
+.TP
+Generate icons (videos + photos):
+.B genfi
+
+.TP
+Photos only:
+.B genfi \-\-types photo ~/Pictures
+
+.TP
+Generate icons with verbose output:
+.B genfi \-v ~/Videos
+
+.TP
+Preview changes without applying:
+.B genfi \-\-dry\-run ~/Videos
+
+.TP
+Use 2 frames, 256px icons:
+.B genfi \-\-max\-frames 2 \-\-size 256 ~/Videos
+
+.TP
+Skip Nautilus refresh:
+.B genfi \-\-no\-restart ~/Videos
+
+.TP
+Remove all generated icons:
+.B genfi \-\-clean ~/Videos
+
+.SH FILES
+.TP
+.B ~/.config/genfi/genfi.toml
+User configuration file.
+
+.TP
+.B ~/.cache/thumbnails/genfi/genfi_cache.db
+Cache database.
+
+.TP
+.B ~/.folder-icon.png
+Generated icon file stored inside each processed folder.
+
+.SH SEE ALSO
+.BR gio (1),
+.BR ffmpeg (1),
+.BR nautilus (1)
+
+.SH AUTHOR
+pmoutsop
+
+.SH LICENSE
+MIT License.

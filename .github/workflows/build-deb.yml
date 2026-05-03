@@ -1,0 +1,136 @@
+name: Build .deb Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 0.1.1)'
+        required: true
+        type: string
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Built version: $VERSION"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg
+
+      - name: Build .deb
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DEB_DIR="genfi_${VERSION}_all_build"
+          mkdir -p "$DEB_DIR"/{DEBIAN,usr/bin,usr/lib/python3/dist-packages/genfi,usr/share/genfi/completions,usr/share/man/man1,usr/share/applications,usr/share/doc/genfi,usr/share/genfi/nautilus-scripts}
+
+          cp src/genfi/__init__.py src/genfi/__main__.py src/genfi/cli.py src/genfi/cache.py src/genfi/compose.py src/genfi/config.py src/genfi/icon.py src/genfi/video.py src/genfi/walker.py "$DEB_DIR/usr/lib/python3/dist-packages/genfi/"
+          cp completions/genfi.bash "$DEB_DIR/usr/share/genfi/completions/"
+          cp completions/_genfi "$DEB_DIR/usr/share/genfi/completions/"
+          cp data/genfi.1 "$DEB_DIR/usr/share/man/man1/"
+          cp data/genfi.desktop "$DEB_DIR/usr/share/applications/"
+          cp nautilus-scripts/genfi "$DEB_DIR/usr/share/genfi/nautilus-scripts/"
+          cp LICENSE "$DEB_DIR/usr/share/doc/genfi/copyright"
+          cp README.md "$DEB_DIR/usr/share/doc/genfi/"
+
+          cat > "$DEB_DIR/usr/bin/genfi" << 'SCRIPT'
+#!/usr/bin/python3
+import sys
+sys.path.insert(0, '/usr/lib/python3/dist-packages')
+from genfi.cli import main
+if __name__ == "__main__":
+    sys.exit(main())
+SCRIPT
+          chmod 755 "$DEB_DIR/usr/bin/genfi" "$DEB_DIR/usr/share/genfi/nautilus-scripts/genfi"
+          chmod 644 "$DEB_DIR/usr/share/man/man1/genfi.1" "$DEB_DIR/usr/share/genfi/completions/genfi.bash" "$DEB_DIR/usr/share/genfi/completions/_genfi" "$DEB_DIR/usr/share/applications/genfi.desktop"
+
+          cat > "$DEB_DIR/DEBIAN/control" << EOF
+Package: genfi
+Version: $VERSION
+Section: utils
+Priority: optional
+Architecture: all
+Depends: python3 (>= 3.11), python3-pil, ffmpeg, libglib2.0-bin
+Recommends: nautilus, xdotool
+Maintainer: pmoutsop
+Description: Generate folder icons from contained video frames and photos
+ genfi recursively scans directories for folders containing video files
+ and/or photos, extracts frames from videos (or uses photos directly),
+ composes them into a folder-shaped icon, and sets it as the folder's
+ custom Nautilus icon.
+ .
+ Features:
+  - Up to 4 media frames per folder icon (videos first, then photos)
+  - Folder-shaped icons with previews inside
+  - Hybrid Nautilus refresh: touch -> xdotool F5 -> nautilus -q
+  - Configurable resolution, crop mode, and workers
+  - mtime-based caching to skip unchanged folders
+  - Nautilus right-click script integration
+  - Full CLI with --dry-run, --clean, --force, --no-restart
+EOF
+
+          cat > "$DEB_DIR/DEBIAN/postinst" << 'SCRIPT'
+#!/bin/bash
+set -e
+if [ -f /usr/share/genfi/completions/genfi.bash ]; then
+    cp /usr/share/genfi/completions/genfi.bash /etc/bash_completion.d/genfi
+fi
+if command -v mandb >/dev/null 2>&1; then
+    mandb --quiet
+fi
+echo "genfi installed successfully."
+echo "Run 'genfi --help' for usage information."
+SCRIPT
+
+          cat > "$DEB_DIR/DEBIAN/postrm" << 'SCRIPT'
+#!/bin/bash
+set -e
+if [ -f /etc/bash_completion.d/genfi ]; then
+    rm -f /etc/bash_completion.d/genfi
+fi
+for home in /home/*; do
+    if [ -d "$home" ]; then
+        ns="$home/.local/share/nautilus/scripts/genfi"
+        if [ -L "$ns" ] || [ -f "$ns" ]; then
+            rm -f "$ns"
+        fi
+    fi
+done
+echo "genfi removed."
+SCRIPT
+          chmod 755 "$DEB_DIR/DEBIAN/postinst" "$DEB_DIR/DEBIAN/postrm"
+
+          DEB_NAME="genfi_${VERSION}_all.deb"
+          dpkg-deb --build --root-owner-group "$DEB_DIR" "$DEB_NAME"
+          rm -rf "$DEB_DIR"
+          echo "DEB_PATH=$DEB_NAME" >> "$GITHUB_ENV"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.DEB_PATH }}
+          generate_release_notes: true
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

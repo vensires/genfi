@@ -1,0 +1,38 @@
+#compdef genfi
+
+_genfi() {
+    local -a opts
+    opts=(
+        '--version[Show version]'
+        '--clean[Remove custom icons]'
+        '--uninstall[Full uninstall]'
+        '--dry-run[Preview without changes]'
+        '--force[Regenerate even if unchanged]'
+        '--max-frames=[Max video frames per icon]'
+        '--size=[Output icon resolution]'
+        '--frame-position=[Position in video for frame]'
+        '--crop=[Crop mode: fill, fit, center]'
+        '--workers=[Parallel workers]'
+        '-v[Verbose output]'
+        '--verbose[Verbose output]'
+        '-q[Quiet output]'
+        '--quiet[Quiet output]'
+        '-h[Show help]'
+        '--help[Show help]'
+    )
+
+    if (( CURRENT == 2 )); then
+        _arguments \
+            '1: :->path_or_flag'
+    fi
+
+    case $state in
+        path_or_flag)
+            _values "genfi options" \
+                "$opts[@]" \
+                "1: :_files -/"
+            ;;
+    esac
+}
+
+_genfi "$@"

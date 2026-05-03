@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Nautilus script: right-click a folder and run this to generate video-based folder icons
+
+# Get the current folder from Nautilus
+NAUTILUS_URI="${NAUTILUS_SCRIPT_CURRENT_URI:-}"
+
+if [[ -z "$NAUTILUS_URI" ]]; then
+    zenity --error --text="Could not determine current folder." 2>/dev/null
+    exit 1
+fi
+
+# Decode URI (handle spaces, special chars)
+FOLDER=$(python3 -c "
+import urllib.parse, sys
+uri = sys.argv[1]
+decoded = urllib.parse.unquote(uri)
+if decoded.startswith('file://'):
+    decoded = decoded[7:]
+print(decoded)
+" "$NAUTILUS_URI")
+
+if [[ ! -d "$FOLDER" ]]; then
+    zenity --error --text="Path does not exist: $FOLDER" 2>/dev/null
+    exit 1
+fi
+
+# Run genfi
+if command -v genfi &>/dev/null; then
+    genfi "$FOLDER" 2>&1 | zenity --text-info --title="genfi output" --width=600 --height=400 2>/dev/null
+else
+    # Fallback: try running as module
+    python3 -m genfi "$FOLDER" 2>&1 | zenity --text-info --title="genfi output" --width=600 --height=400 2>/dev/null
+fi

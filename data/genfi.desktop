@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=genfi
+Comment=Generate folder icons from contained video frames
+Exec=genfi %F
+Icon=folder
+Terminal=true
+Type=Application
+Categories=Utility;FileTools;
+Keywords=folder;icon;video;thumbnail;nautilus;
