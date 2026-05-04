@@ -1,9 +1,10 @@
 """Image compositing: arrange video frames inside a folder-shaped icon."""
 
 import logging
+import math
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 logger = logging.getLogger(__name__)
 
@@ -11,15 +12,18 @@ CROP_FILL = "fill"
 CROP_FIT = "fit"
 CROP_CENTER = "center"
 
-
+# Adwaita/Yaru-inspired colour palette.
+# back     = darker back piece visible as the "tab" above the front body
+# front    = main lighter body colour
+# highlight= shimmer peak colour blended into the horizontal gradient
+# edge_top = subtle top-edge highlight line on the front body
+# interior_bg = dark tint drawn behind the media mosaic
 FOLDER_COLORS = {
-    "body": (53, 132, 228),
-    "body_dark": (41, 121, 214),
-    "tab": (64, 145, 236),
-    "tab_dark": (53, 132, 228),
-    "edge": (30, 90, 170),
-    "interior_bg": (20, 70, 150),
-    "separator": (80, 160, 240),
+    "back":         (67,  141, 230),  # #438de6
+    "front":        (98,  160, 234),  # #62a0ea
+    "highlight":    (175, 212, 255),  # #afd4ff
+    "edge_top":     (164, 202, 238),  # #a4caee
+    "interior_bg":  (30,  90,  160),
 }
 
 
@@ -28,6 +32,7 @@ def compose_grid(
     output_path: Path,
     icon_size: int = 512,
     crop_mode: str = CROP_CENTER,
+    background: Path | None = None,
 ) -> bool:
     """Compose frames inside a folder-shaped icon and save as PNG.
 
@@ -38,6 +43,9 @@ def compose_grid(
         return False
 
     icon = _draw_folder_base(icon_size)
+
+    if background is not None:
+        icon = _apply_body_background(icon, background, icon_size)
 
     interior = _get_interior_rect(icon_size)
     frames = _load_and_crop_frames(frame_paths[:count], interior, crop_mode)
@@ -57,99 +65,273 @@ def compose_grid(
         return False
 
 
+# ── Geometry helpers ──────────────────────────────────────────────────────────
+
+def _folder_geometry(size: int) -> dict:
+    """Return all proportional measurements for the folder shape."""
+    bl = int(size * 0.06)
+    br = int(size * 0.94)
+    bb = int(size * 0.91)
+    r  = int(size * 0.07)
+    tab_h   = int(size * 0.10)   # how far the back piece protrudes above front
+    back_top = int(size * 0.14)
+    front_top = back_top + tab_h
+    back_bottom = int(size * 0.88)
+    tab_w   = int(size * 0.44)   # width of the tab notch
+    back_r  = int(size * 0.06)
+    return dict(
+        bl=bl, br=br, bb=bb, r=r,
+        tab_h=tab_h, back_top=back_top, front_top=front_top,
+        back_bottom=back_bottom, tab_w=tab_w, back_r=back_r,
+    )
+
+
+# ── Folder base drawing ───────────────────────────────────────────────────────
+
 def _draw_folder_base(size: int) -> Image.Image:
-    """Draw the base folder shape on a transparent canvas."""
+    """Draw an Adwaita/Yaru-style folder on a transparent canvas.
+
+    Layers (bottom to top):
+      1. Soft drop shadow beneath the front body
+      2. Darker back piece — tab notch + body rectangle
+      3. Lighter front body rectangle
+      4. Horizontal shimmer gradient masked to the front body
+      5. Thin top-edge highlight line
+    """
+    g = _folder_geometry(size)
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
 
-    tab_w = int(size * 0.38)
-    tab_h = int(size * 0.09)
-    body_top = int(size * 0.17)
-    body_left = int(size * 0.06)
-    body_right = int(size * 0.94)
-    body_bottom = int(size * 0.92)
-    radius = int(size * 0.035)
+    # 1. Drop shadow
+    shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    sd.rounded_rectangle(
+        [g["bl"] + 2, g["front_top"] + 4, g["br"] + 4, g["bb"] + 6],
+        radius=g["r"],
+        fill=(0, 0, 0, 90),
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=max(2, int(size * 0.018))))
+    img = Image.alpha_composite(img, shadow)
 
-    tab_path = [
-        (body_left + radius, body_top),
-        (body_left + radius + tab_w - radius, body_top),
-        (body_left + radius + tab_w, body_top + tab_h - radius),
-        (body_left + radius + tab_w, body_top + tab_h),
-        (body_left, body_top + tab_h),
-        (body_left, body_top + radius),
-    ]
-    draw.polygon(tab_path, fill=FOLDER_COLORS["tab"], outline=FOLDER_COLORS["edge"], width=2)
+    # 2. Back piece (darker colour, draws tab notch + body)
+    back = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    bd = ImageDraw.Draw(back)
+    tab_pts = _tab_polygon(g)
+    bd.polygon(tab_pts, fill=FOLDER_COLORS["back"])
+    bd.rounded_rectangle(
+        [g["bl"], g["front_top"] - 2, g["br"], g["back_bottom"]],
+        radius=g["r"],
+        fill=FOLDER_COLORS["back"],
+    )
+    img = Image.alpha_composite(img, back)
 
-    body_path = _rounded_rect_path(body_left, body_top + tab_h - 2, body_right, body_bottom, radius)
-    draw.polygon(body_path, fill=FOLDER_COLORS["body"], outline=FOLDER_COLORS["edge"], width=2)
+    # 3. Front body
+    front = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    fd = ImageDraw.Draw(front)
+    fd.rounded_rectangle(
+        [g["bl"], g["front_top"], g["br"], g["bb"]],
+        radius=g["r"],
+        fill=FOLDER_COLORS["front"],
+    )
+    img = Image.alpha_composite(img, front)
 
-    inner_body = (body_left + 4, body_top + tab_h + 2, body_right - 4, body_bottom - 4)
-    inner_r = max(radius - 2, 2)
-    inner_path = _rounded_rect_path(*inner_body, inner_r)
-    draw.polygon(inner_path, fill=FOLDER_COLORS["body_dark"])
+    # 4. Shimmer gradient (horizontal, masked to front body shape)
+    img = _apply_shimmer(img, g, size)
 
-    highlight = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    hdraw = ImageDraw.Draw(highlight)
-    grad_top = body_top + tab_h
-    grad_bottom = body_bottom
-    for y in range(grad_top, grad_bottom):
-        alpha = int(40 * (1 - (y - grad_top) / (grad_bottom - grad_top)))
-        hdraw.line([(body_left + 4, y), (body_right - 4, y)], fill=(255, 255, 255, alpha))
-    img = Image.alpha_composite(img, highlight)
+    # 5. Top-edge highlight line
+    hl = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    hld = ImageDraw.Draw(hl)
+    lw = max(1, size // 256)
+    hld.line(
+        [(g["bl"] + g["r"], g["front_top"] + lw),
+         (g["br"] - g["r"], g["front_top"] + lw)],
+        fill=(*FOLDER_COLORS["edge_top"], 190),
+        width=lw,
+    )
+    img = Image.alpha_composite(img, hl)
 
     return img
 
 
-def _rounded_rect_path(x0: int, y0: int, x1: int, y1: int, r: int) -> list[tuple[int, int]]:
-    """Return polygon points for a rounded rectangle."""
-    r = min(r, (x1 - x0) // 2, (y1 - y0) // 2)
-    if r < 1:
-        return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
-    steps = 6
-    points = []
-    for i in range(steps):
-        angle = (i / steps) * 3.14159 / 2
-        points.append((x1 - r + int(r * (1 - 3.14159 / 2 + angle) * 2 / 3.14159), y0 + r - int(r * (1 - 3.14159 / 2 + angle) * 2 / 3.14159)))
-    points = []
-    import math
-    for angle_deg in range(0, 91, 30):
-        a = math.radians(angle_deg)
-        points.append((x1 - r + int(r * math.cos(a)), y0 + r - int(r * math.sin(a))))
-    for angle_deg in range(0, 91, 30):
-        a = math.radians(angle_deg)
-        points.append((x1 - r + int(r * math.sin(a)), y1 - r + int(r * math.cos(a))))
-    for angle_deg in range(0, 91, 30):
-        a = math.radians(angle_deg)
-        points.append((x0 + r - int(r * math.cos(a)), y1 - r + int(r * math.sin(a))))
-    for angle_deg in range(0, 91, 30):
-        a = math.radians(angle_deg)
-        points.append((x0 + r - int(r * math.sin(a)), y0 + r - int(r * math.cos(a))))
-    return points
+def _tab_polygon(g: dict) -> list[tuple[int, int]]:
+    """Return polygon points for the tab (back-piece notch above the front body).
 
+    The tab has rounded top-left and top-right corners and a flat bottom edge
+    flush with front_top, matching the Adwaita two-layer folder look.
+    """
+    x0, y0 = g["bl"], g["back_top"]
+    x1, y1 = g["bl"] + g["tab_w"], g["front_top"]
+    r  = g["back_r"]
+    cr = int(r * 0.7)   # softer curve on the top-right corner of the tab
+    pts: list[tuple[int, int]] = []
+    # Top-left rounded corner
+    for deg in range(180, 271, 10):
+        a = math.radians(deg)
+        pts.append((x0 + r + int(r * math.cos(a)),
+                    y0 + r + int(r * math.sin(a))))
+    # Top-right rounded corner (smaller radius for a natural taper)
+    for deg in range(270, 361, 10):
+        a = math.radians(deg)
+        pts.append((x1 - cr + int(cr * math.cos(a)),
+                    y0 + cr + int(cr * math.sin(a))))
+    # Straight bottom edge
+    pts.append((x1, y1))
+    pts.append((x0, y1))
+    return pts
+
+
+def _apply_shimmer(img: Image.Image, g: dict, size: int) -> Image.Image:
+    """Composite a horizontal shimmer gradient onto the front body."""
+    bl, br = g["bl"], g["br"]
+    front_top, bb = g["front_top"], g["bb"]
+    body_w = br - bl
+
+    # Gradient stops: (position 0–1, alpha 0–255)
+    stops = [
+        (0.00,  80),
+        (0.06, 180),
+        (0.13,  60),
+        (0.87,  60),
+        (0.96, 120),
+        (1.00,  70),
+    ]
+    fr2, fg2, fb2 = FOLDER_COLORS["front"]
+    hr,  hg,  hb  = FOLDER_COLORS["highlight"]
+
+    shimmer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    sh = ImageDraw.Draw(shimmer)
+
+    for x in range(bl, br):
+        t = (x - bl) / body_w
+        a = _interp_stops(stops, t)
+        blend = a / 180.0
+        px_r = int(fr2 + (hr - fr2) * blend)
+        px_g = int(fg2 + (hg - fg2) * blend)
+        px_b = int(fb2 + (hb - fb2) * blend)
+        sh.line([(x, front_top), (x, bb)], fill=(px_r, px_g, px_b, int(a)))
+
+    # Mask to front body shape
+    mask = Image.new("L", (size, size), 0)
+    md = ImageDraw.Draw(mask)
+    md.rounded_rectangle([bl, front_top, br, bb], radius=g["r"], fill=255)
+    _apply_mask_to_alpha(shimmer, mask)
+
+    return Image.alpha_composite(img, shimmer)
+
+
+def _apply_mask_to_alpha(img: Image.Image, mask: Image.Image) -> None:
+    """Clip img's alpha channel in-place using mask (L-mode)."""
+    r, g, b, a = img.split()
+    a_bytes = a.tobytes()
+    m_bytes = mask.tobytes()
+    clipped = bytes(min(av, mv) for av, mv in zip(a_bytes, m_bytes))
+    img.putalpha(Image.frombytes("L", img.size, clipped))
+
+
+def _interp_stops(stops: list[tuple[float, float]], t: float) -> float:
+    """Linearly interpolate a value across gradient stops [(position, value)]."""
+    for i in range(len(stops) - 1):
+        t0, v0 = stops[i]
+        t1, v1 = stops[i + 1]
+        if t0 <= t <= t1:
+            f = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
+            return v0 + (v1 - v0) * f
+    return stops[-1][1]
+
+
+# ── Custom background ─────────────────────────────────────────────────────────
+
+def _apply_body_background(
+    folder_img: Image.Image,
+    background: Path,
+    size: int,
+) -> Image.Image:
+    """Replace the folder body fill with a user-supplied image.
+
+    The image is scaled/cropped to cover the front body rectangle, then masked
+    to the body's rounded-rectangle shape and composited onto the folder.
+    The tab, drop shadow, shimmer, and overlay effects are all preserved.
+    """
+    g = _folder_geometry(size)
+    bl, br = g["bl"], g["br"]
+    front_top, bb, r = g["front_top"], g["bb"], g["r"]
+    body_w = br - bl
+    body_h = bb - front_top
+
+    # Load the background image
+    bg = _load_background_image(background, body_w, body_h)
+    if bg is None:
+        return folder_img
+
+    # Build a mask for the front body rounded rectangle
+    mask = Image.new("L", (size, size), 0)
+    md = ImageDraw.Draw(mask)
+    md.rounded_rectangle([bl, front_top, br, bb], radius=r, fill=255)
+
+    # Place the background image at the body position on a full-size canvas
+    layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    layer.paste(bg, (bl, front_top))
+    _apply_mask_to_alpha(layer, mask)
+
+    return Image.alpha_composite(folder_img, layer)
+
+
+def _load_background_image(
+    path: Path, target_w: int, target_h: int
+) -> Image.Image | None:
+    """Load a JPEG, PNG, or SVG file and scale/crop it to (target_w, target_h)."""
+    suffix = path.suffix.lower()
+
+    if suffix == ".svg":
+        try:
+            import cairosvg  # type: ignore
+            png_bytes = cairosvg.svg2png(
+                url=str(path),
+                output_width=target_w,
+                output_height=target_h,
+            )
+            from io import BytesIO
+            img = Image.open(BytesIO(png_bytes)).convert("RGBA")
+        except ImportError:
+            logger.warning(
+                "SVG background requested but cairosvg is not installed; "
+                "falling back to default folder colour. "
+                "Install it with: pip install cairosvg"
+            )
+            return None
+        except Exception as e:
+            logger.warning("Could not rasterize SVG background %s: %s", path, e)
+            return None
+    else:
+        try:
+            img = Image.open(path).convert("RGBA")
+        except Exception as e:
+            logger.warning("Could not open background image %s: %s", path, e)
+            return None
+
+    return _crop_and_resize(img, target_w, target_h, CROP_CENTER)
+
+
+# ── Interior ──────────────────────────────────────────────────────────────────
 
 def _get_interior_rect(size: int) -> tuple[int, int, int, int]:
     """Return the (x0, y0, x1, y1) rectangle inside the folder for frames."""
-    padding = int(size * 0.08)
-    tab_h = int(size * 0.09)
-    body_top = int(size * 0.17)
-    body_bottom = int(size * 0.92)
-    x0 = int(size * 0.06) + padding
-    y0 = body_top + tab_h + padding
-    x1 = int(size * 0.94) - padding
-    y1 = body_bottom - padding
+    g = _folder_geometry(size)
+    pad = int(size * 0.07)
+    x0 = g["bl"] + pad
+    y0 = g["front_top"] + pad
+    x1 = g["br"] - pad
+    y1 = g["bb"] - pad
     return (x0, y0, x1, y1)
 
 
 def _draw_interior_background(img: Image.Image, interior: tuple[int, int, int, int]):
     """Draw the dark interior area where frames will be placed."""
     draw = ImageDraw.Draw(img)
-    r = int(6)
     x0, y0, x1, y1 = interior
-    w = x1 - x0
-    h = y1 - y0
-    path = _rounded_rect_path(x0, y0, x1, y1, r)
-    draw.polygon(path, fill=FOLDER_COLORS["interior_bg"])
+    draw.rounded_rectangle([x0, y0, x1, y1], radius=6, fill=FOLDER_COLORS["interior_bg"])
 
+
+# ── Frame loading and placement ───────────────────────────────────────────────
 
 def _load_and_crop_frames(
     frame_paths: list[Path],
@@ -206,9 +388,9 @@ def _place_frames(
         half_w = (int_w - gap * 3) // 2
         half_h = (int_h - gap * 3) // 2
         positions = [
-            (x0 + gap, y0 + gap, x0 + gap + half_w, y0 + gap + half_h * 2 + gap),
-            (x0 + gap * 2 + half_w, y0 + gap, x0 + gap * 2 + half_w + half_w, y0 + gap + half_h),
-            (x0 + gap * 2 + half_w, y0 + gap * 2 + half_h, x0 + gap * 2 + half_w + half_w, y0 + gap * 2 + half_h + half_h),
+            (x0 + gap,           y0 + gap,           x0 + gap + half_w,           y0 + gap + half_h * 2 + gap),
+            (x0 + gap * 2 + half_w, y0 + gap,        x0 + gap * 2 + half_w * 2,  y0 + gap + half_h),
+            (x0 + gap * 2 + half_w, y0 + gap * 2 + half_h, x0 + gap * 2 + half_w * 2, y0 + gap * 2 + half_h * 2),
         ]
         for i, (cx0, cy0, cx1, cy1) in enumerate(positions):
             frame = _crop_and_resize(frames[i], cx1 - cx0, cy1 - cy0, CROP_CENTER)
@@ -230,6 +412,25 @@ def _place_frames(
             img.paste(frame, (cx0, cy0), frame)
 
 
+# ── Overlay effects ───────────────────────────────────────────────────────────
+
+def _draw_folder_overlay(img: Image.Image, size: int):
+    """Draw a subtle bottom-edge inner shadow on the front body."""
+    g = _folder_geometry(size)
+    overlay = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    for offset in range(6):
+        alpha = int(20 * (1 - offset / 6))
+        od.line(
+            [(g["bl"] + g["r"], g["bb"] - 4 + offset),
+             (g["br"] - g["r"], g["bb"] - 4 + offset)],
+            fill=(0, 0, 0, alpha),
+        )
+    img.alpha_composite(overlay)
+
+
+# ── Image utilities ───────────────────────────────────────────────────────────
+
 def _round_corners(img: Image.Image, radius: int) -> Image.Image:
     """Apply rounded corners to an image using a mask."""
     mask = Image.new("L", img.size, 0)
@@ -239,33 +440,6 @@ def _round_corners(img: Image.Image, radius: int) -> Image.Image:
     result = Image.new("RGBA", img.size, (0, 0, 0, 0))
     result.paste(img, (0, 0), mask)
     return result
-
-
-def _draw_folder_overlay(img: Image.Image, size: int):
-    """Draw subtle overlay effects on top of the folder."""
-    draw = ImageDraw.Draw(img)
-    body_top = int(size * 0.17)
-    body_bottom = int(size * 0.92)
-    body_left = int(size * 0.06)
-    body_right = int(size * 0.94)
-
-    bottom_shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    bdraw = ImageDraw.Draw(bottom_shadow)
-    for y_offset in range(8):
-        alpha = int(25 * (1 - y_offset / 8))
-        bdraw.line(
-            [(body_left + 6, body_bottom - 6 + y_offset), (body_right - 6, body_bottom - 6 + y_offset)],
-            fill=(0, 0, 0, alpha),
-        )
-    img = Image.alpha_composite(img, bottom_shadow)
-
-    edge_hl = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    edraw = ImageDraw.Draw(edge_hl)
-    edraw.line(
-        [(body_left + 2, body_top + 2), (body_right - 2, body_top + 2)],
-        fill=(255, 255, 255, 40),
-    )
-    img = Image.alpha_composite(img, edge_hl)
 
 
 def _crop_and_resize(img: Image.Image, target_w: int, target_h: int, mode: str) -> Image.Image:
@@ -294,9 +468,7 @@ def _crop_and_resize(img: Image.Image, target_w: int, target_h: int, mode: str) 
         new_h = int(img_h * ratio)
         resized = img.resize((new_w, new_h), Image.LANCZOS)
         left = (new_w - target_w) // 2
-        top = (new_h - target_h) // 2
-        right = left + target_w
-        bottom = top + target_h
-        img = resized.crop((left, top, right, bottom))
+        top  = (new_h - target_h) // 2
+        img  = resized.crop((left, top, left + target_w, top + target_h))
 
     return img

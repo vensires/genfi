@@ -1,14 +1,17 @@
 name: Build .deb Package
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [created]
   workflow_dispatch:
     inputs:
       version:
         description: 'Version to build (e.g., 0.1.1)'
         required: true
+        type: string
+      tag_name:
+        description: 'Release tag to upload to (e.g., v0.1.1) — only used with workflow_dispatch'
+        required: false
         type: string
 
 jobs:
@@ -21,8 +24,9 @@ jobs:
       - name: Set version
         id: version
         run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"
           else
             VERSION="${{ inputs.version }}"
           fi
@@ -92,11 +96,10 @@ jobs:
           rm -rf "$DEB_DIR"
           echo "DEB_PATH=$DEB_NAME" >> "$GITHUB_ENV"
 
-      - name: Create Release
+      - name: Upload .deb to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: "${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag_name }}"
           files: "${{ env.DEB_PATH }}"
-          generate_release_notes: true
-          draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

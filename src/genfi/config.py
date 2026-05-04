@@ -24,6 +24,8 @@ DEFAULTS = {
     "dry_run": False,
     "verbose": False,
     "quiet": False,
+    "background": None,
+    "file_manager": "nautilus",
 }
 
 CONFIG_PATHS = [

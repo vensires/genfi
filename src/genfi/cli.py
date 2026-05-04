@@ -11,11 +11,24 @@ from . import walker
 from .cache import IconCache
 from .compose import compose_grid
 from .config import load_config, ensure_config_dir
-from .icon import clean_icon, refresh_nautilus, set_icon
+from .icon import (
+    clean_icon, clean_icon_dotdir,
+    refresh,
+    set_icon, set_icon_dotdir,
+)
 from .video import extract_media_frames
 
 CACHE_DIR = Path.home() / ".cache" / "thumbnails" / "genfi"
 ICON_NAME = ".folder-icon.png"
+
+_DOTDIR_MANAGERS = {"dolphin", "thunar"}
+
+
+def _icon_fns(file_manager: str):
+    """Return the (set_icon_fn, clean_icon_fn) pair for the given file manager."""
+    if file_manager.lower() in _DOTDIR_MANAGERS:
+        return set_icon_dotdir, clean_icon_dotdir
+    return set_icon, clean_icon
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -102,6 +115,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Number of parallel frame extraction workers (default: 4)",
     )
     parser.add_argument(
+        "--file-manager",
+        choices=["nautilus", "nemo", "dolphin", "thunar"],
+        default=None,
+        help="File manager to integrate with (default: nautilus)",
+    )
+    parser.add_argument(
+        "--background",
+        type=Path,
+        default=None,
+        metavar="IMAGE",
+        help="Image file (JPEG, PNG, or SVG) to use as the folder body background instead of the default blue fill",
+    )
+    parser.add_argument(
         "--no-restart",
         action="store_true",
         help="Do not refresh Nautilus after generating icons",
@@ -163,6 +189,17 @@ def main() -> int:
         cli_overrides["media_types"] = args.types
     if args.workers is not None:
         cli_overrides["workers"] = args.workers
+    if args.file_manager is not None:
+        cli_overrides["file_manager"] = args.file_manager
+    if args.background is not None:
+        bg = args.background.resolve()
+        if not bg.exists():
+            logging.error("Background image not found: %s", bg)
+            return 1
+        if bg.suffix.lower() not in {".jpg", ".jpeg", ".png", ".svg"}:
+            logging.error("Background image must be JPEG, PNG, or SVG: %s", bg)
+            return 1
+        cli_overrides["background"] = bg
 
     config = load_config(cli_overrides)
     setup_logging(config["verbose"], config["quiet"])
@@ -211,6 +248,9 @@ def _do_generate(root: Path, config: dict, dry_run: bool = False, no_restart: bo
     media_types = config["media_types"]
     force = config["force"]
     quiet = config["quiet"]
+    background = config.get("background")
+    file_manager = config.get("file_manager", "nautilus")
+    _set_icon, _clean_icon = _icon_fns(file_manager)
 
     total = 0
     generated = 0
@@ -263,12 +303,12 @@ def _do_generate(root: Path, config: dict, dry_run: bool = False, no_restart: bo
             errors += 1
             continue
 
-        if not compose_grid(frames, icon_path, icon_size, crop_mode):
+        if not compose_grid(frames, icon_path, icon_size, crop_mode, background):
             logging.error("Failed to compose icon for %s", folder)
             errors += 1
             continue
 
-        if not set_icon(folder, icon_path):
+        if not _set_icon(folder, icon_path):
             logging.error("Failed to set icon for %s", folder)
             errors += 1
             continue
@@ -287,7 +327,7 @@ def _do_generate(root: Path, config: dict, dry_run: bool = False, no_restart: bo
             print(f"OK    {folder} ({frame_desc} frames)")
 
     if processed_folders and not no_restart and not dry_run:
-        refresh_nautilus(processed_folders, quiet=quiet)
+        refresh(processed_folders, file_manager=file_manager, quiet=quiet)
 
     if not quiet:
         print(f"\nDone: {generated} generated, {skipped} skipped, {errors} errors (of {total} folders)")
@@ -299,6 +339,8 @@ def _do_clean(root: Path, config: dict) -> int:
     """Remove custom icons under *root*."""
     cache = IconCache(CACHE_DIR)
     quiet = config["quiet"]
+    file_manager = config.get("file_manager", "nautilus")
+    _set_icon, _clean_icon = _icon_fns(file_manager)
     cleaned = 0
     errors = 0
 
@@ -315,7 +357,7 @@ def _do_clean(root: Path, config: dict) -> int:
                 logging.error("Could not delete %s: %s", icon, e)
                 errors += 1
 
-        if clean_icon(folder):
+        if _clean_icon(folder):
             cleaned += 1
             if not quiet:
                 print(f"CLEAN {folder}")
@@ -335,6 +377,8 @@ def _do_uninstall(config: dict, quiet: bool = False) -> int:
     logging.info("Uninstalling genfi...")
 
     cache = IconCache(CACHE_DIR)
+    file_manager = config.get("file_manager", "nautilus")
+    _set_icon, _clean_icon = _icon_fns(file_manager)
     cleaned = 0
     errors = 0
 
@@ -348,7 +392,7 @@ def _do_uninstall(config: dict, quiet: bool = False) -> int:
             except OSError:
                 pass
 
-        if clean_icon(folder):
+        if _clean_icon(folder):
             cleaned += 1
         else:
             errors += 1
