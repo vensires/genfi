@@ -1,12 +1,13 @@
 # genfi
 
-Generate folder icons from contained video frames and photos for Nautilus (GNOME Files).
+Generate folder icons from contained video frames and photos for Nautilus.
 
 ## Features
 
 - Recursively scans directories for folders containing videos and/or photos
 - Extracts frames from videos (ffmpeg) and uses photos directly (Pillow)
-- Composes frames into a folder-shaped icon with previews inside (up to 4 frames)
+- Composes frames into a folder-shaped icon with previews inside (up to 4
+frames)
 - **Video priority**: videos are used first; remaining slots filled by photos
 - Sets the icon as the folder's custom Nautilus icon via `gio`
 - Caches results (mtime-based) to skip unchanged folders
@@ -20,13 +21,13 @@ Generate folder icons from contained video frames and photos for Nautilus (GNOME
 ### Via pip
 
 ```bash
-pip install .
+pip install genfi
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/pmoutsop/genfi.git
+git clone https://github.com/vensires/genfi.git
 cd genfi
 pip install .
 ```

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "genfi"
 version = "0.1.1"
-description = "Generate folder icons from contained video frames and photos"
+description = "Vibe-coded software to generate folder icons from contained video frames and photos."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
@@ -13,7 +13,7 @@ dependencies = [
     "Pillow>=9.0",
 ]
 authors = [
-    {name = "pmoutsop"},
+    {name = "vensires", email = "vensires@gmail.com"},
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

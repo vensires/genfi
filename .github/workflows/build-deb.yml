@@ -54,71 +54,37 @@ jobs:
           cp LICENSE "$DEB_DIR/usr/share/doc/genfi/copyright"
           cp README.md "$DEB_DIR/usr/share/doc/genfi/"
 
-          cat > "$DEB_DIR/usr/bin/genfi" << 'SCRIPT'
-#!/usr/bin/python3
-import sys
-sys.path.insert(0, '/usr/lib/python3/dist-packages')
-from genfi.cli import main
-if __name__ == "__main__":
-    sys.exit(main())
-SCRIPT
+          printf '%s\n' '#!/usr/bin/python3' 'import sys' "sys.path.insert(0, '/usr/lib/python3/dist-packages')" 'from genfi.cli import main' 'if __name__ == "__main__":' '    sys.exit(main())' > "$DEB_DIR/usr/bin/genfi"
           chmod 755 "$DEB_DIR/usr/bin/genfi" "$DEB_DIR/usr/share/genfi/nautilus-scripts/genfi"
           chmod 644 "$DEB_DIR/usr/share/man/man1/genfi.1" "$DEB_DIR/usr/share/genfi/completions/genfi.bash" "$DEB_DIR/usr/share/genfi/completions/_genfi" "$DEB_DIR/usr/share/applications/genfi.desktop"
 
-          cat > "$DEB_DIR/DEBIAN/control" << EOF
-Package: genfi
-Version: $VERSION
-Section: utils
-Priority: optional
-Architecture: all
-Depends: python3 (>= 3.11), python3-pil, ffmpeg, libglib2.0-bin
-Recommends: nautilus, xdotool
-Maintainer: pmoutsop
-Description: Generate folder icons from contained video frames and photos
- genfi recursively scans directories for folders containing video files
- and/or photos, extracts frames from videos (or uses photos directly),
- composes them into a folder-shaped icon, and sets it as the folder's
- custom Nautilus icon.
- .
- Features:
-  - Up to 4 media frames per folder icon (videos first, then photos)
-  - Folder-shaped icons with previews inside
-  - Hybrid Nautilus refresh: touch -> xdotool F5 -> nautilus -q
-  - Configurable resolution, crop mode, and workers
-  - mtime-based caching to skip unchanged folders
-  - Nautilus right-click script integration
-  - Full CLI with --dry-run, --clean, --force, --no-restart
-EOF
+          printf 'Package: genfi\nVersion: %s\nSection: utils\nPriority: optional\nArchitecture: all\nDepends: python3 (>= 3.11), python3-pil, ffmpeg, libglib2.0-bin\nRecommends: nautilus, xdotool\nMaintainer: pmoutsop\nDescription: Generate folder icons from contained video frames and photos\n genfi recursively scans directories for folders containing video files\n and/or photos, extracts frames from videos (or uses photos directly),\n composes them into a folder-shaped icon, and sets it as the folder'"'"'s\n custom Nautilus icon.\n .\n Features:\n  - Up to 4 media frames per folder icon (videos first, then photos)\n  - Folder-shaped icons with previews inside\n  - Hybrid Nautilus refresh: touch -> xdotool F5 -> nautilus -q\n  - Configurable resolution, crop mode, and workers\n  - mtime-based caching to skip unchanged folders\n  - Nautilus right-click script integration\n  - Full CLI with --dry-run, --clean, --force, --no-restart\n' "$VERSION" > "$DEB_DIR/DEBIAN/control"
 
-          cat > "$DEB_DIR/DEBIAN/postinst" << 'SCRIPT'
-#!/bin/bash
-set -e
-if [ -f /usr/share/genfi/completions/genfi.bash ]; then
-    cp /usr/share/genfi/completions/genfi.bash /etc/bash_completion.d/genfi
-fi
-if command -v mandb >/dev/null 2>&1; then
-    mandb --quiet
-fi
-echo "genfi installed successfully."
-echo "Run 'genfi --help' for usage information."
-SCRIPT
+          printf '%s\n' '#!/bin/bash' 'set -e' \
+            'if [ -f /usr/share/genfi/completions/genfi.bash ]; then' \
+            '    cp /usr/share/genfi/completions/genfi.bash /etc/bash_completion.d/genfi' \
+            'fi' \
+            'if command -v mandb >/dev/null 2>&1; then' \
+            '    mandb --quiet' \
+            'fi' \
+            'echo "genfi installed successfully."' \
+            'echo "Run '"'"'genfi --help'"'"' for usage information."' \
+            > "$DEB_DIR/DEBIAN/postinst"
 
-          cat > "$DEB_DIR/DEBIAN/postrm" << 'SCRIPT'
-#!/bin/bash
-set -e
-if [ -f /etc/bash_completion.d/genfi ]; then
-    rm -f /etc/bash_completion.d/genfi
-fi
-for home in /home/*; do
-    if [ -d "$home" ]; then
-        ns="$home/.local/share/nautilus/scripts/genfi"
-        if [ -L "$ns" ] || [ -f "$ns" ]; then
-            rm -f "$ns"
-        fi
-    fi
-done
-echo "genfi removed."
-SCRIPT
+          printf '%s\n' '#!/bin/bash' 'set -e' \
+            'if [ -f /etc/bash_completion.d/genfi ]; then' \
+            '    rm -f /etc/bash_completion.d/genfi' \
+            'fi' \
+            'for home in /home/*; do' \
+            '    if [ -d "$home" ]; then' \
+            '        ns="$home/.local/share/nautilus/scripts/genfi"' \
+            '        if [ -L "$ns" ] || [ -f "$ns" ]; then' \
+            '            rm -f "$ns"' \
+            '        fi' \
+            '    fi' \
+            'done' \
+            'echo "genfi removed."' \
+            > "$DEB_DIR/DEBIAN/postrm"
           chmod 755 "$DEB_DIR/DEBIAN/postinst" "$DEB_DIR/DEBIAN/postrm"
 
           DEB_NAME="genfi_${VERSION}_all.deb"
@@ -129,7 +95,7 @@ SCRIPT
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.DEB_PATH }}
+          files: "${{ env.DEB_PATH }}"
           generate_release_notes: true
           draft: false
         env:
